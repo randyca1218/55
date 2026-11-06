@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>動態報價單產生器</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome for Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- html2pdf.js for Client-side PDF Generation -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      .print-only { display: block !important; }
+      body { background: white !important; font-size: 12pt; }
+      .shadow-md, .shadow-lg { box-shadow: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen pb-24 md:pb-12">
+
+  <!-- Header -->
+  <header class="bg-slate-900 text-white py-4 px-6 shadow-md no-print">
+    <div class="max-w-5xl mx-auto flex justify-between items-center">
+      <h1 class="text-xl font-bold flex items-center gap-2">
+        <i class="fa-solid fa-file-invoice-dollar text-indigo-400"></i> 動態報價單系統
+      </h1>
+      <span id="dataStatus" class="text-xs px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 font-medium">
+        <i class="fa-solid fa-spinner fa-spin mr-1"></i> 請輸入試算表 ID 載入資料
+      </span>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto p-4 md:p-6 space-y-6">
+
+    <!-- Spreadsheet Config Section -->
+    <section class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 no-print">
+      <h2 class="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+        <i class="fa-solid fa-link text-indigo-600"></i> Google 試算表設定 (JSONP 即時讀取)
+      </h2>
+      <div class="flex flex-col sm:flex-row gap-3">
+        <div class="flex-1">
+          <input type="text" id="spreadsheetIdInput" 
+                 placeholder="請輸入 Google 試算表 ID 或完整連結" 
+                 value="19FiN1yVL8cIK-zIhUirbmlnw0fquNOpiIZSq3erkoGg"
+                 class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <button id="btnLoadData" onclick="initLoadSheet()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-5 rounded-lg text-sm transition-all shadow-sm flex items-center justify-center gap-2">
+          <i class="fa-solid fa-rotate"></i> 載入資料
+        </button>
+      </div>
+      <p class="text-xs text-slate-500 mt-2">
+        * 請確保 Google 試算表已設為「知道連結的任何人可檢視」，且包含欄位：<code class="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-mono">type</code>, <code class="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-mono">pno</code>, <code class="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-mono">pname</code>, <code class="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-mono">unit</code>, <code class="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-mono">price</code>。
+      </p>
+    </section>
+
+    <!-- Error Banner -->
+    <div id="errorBox" class="hidden bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r shadow-sm no-print">
+      <div class="flex items-center">
+        <i class="fa-solid fa-triangle-exclamation text-rose-500 text-xl mr-3"></i>
+        <div>
+          <h3 class="font-bold text-rose-800">資料讀取失敗</h3>
+          <p class="text-sm text-rose-700 mt-0.5" id="errorMessage">無法取得 Google 試算表資料，請確認權限與網路連線。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Client & Order Info Form -->
+    <section class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 no-print">
+      <h2 class="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+        <i class="fa-solid fa-user-gear text-indigo-600"></i> 客戶資訊與單號
+      </h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">客戶名稱 <span class="text-rose-500">*</span></label>
+          <input type="text" id="clientName" value="貴客戶" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">報價日期</label>
+          <input type="date" id="quoteDate" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">報價單號</label>
+          <input type="text" id="quoteNo" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" readonly>
+        </div>
+      </div>
+    </section>
+
+    <!-- Product Selection Form -->
+    <section class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 no-print">
+      <h2 class="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+        <i class="fa-solid fa-cart-plus text-indigo-600"></i> 選購品項
+      </h2>
+      
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+        <div class="md:col-span-3">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">1. 選擇類別</label>
+          <select id="selectType" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:bg-slate-100" disabled>
+            <option value="">-- 請先載入資料 --</option>
+          </select>
+        </div>
+
+        <div class="md:col-span-3">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">2. 選擇編號</label>
+          <select id="selectPno" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:bg-slate-100" disabled>
+            <option value="">-- 請先選類別 --</option>
+          </select>
+        </div>
+
+        <div class="md:col-span-3">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">3. 品名 / 單位 / 單價</label>
+          <div class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs min-h-[38px] flex flex-col justify-center">
+            <div id="productInfoDisplay" class="text-slate-500 truncate">請先選擇產品編號</div>
+          </div>
+        </div>
+
+        <div class="md:col-span-1">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">數量</label>
+          <input type="number" id="inputQty" value="1" min="1" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:bg-slate-100" disabled>
+        </div>
+
+        <div class="md:col-span-2">
+          <button id="btnAddItem" onclick="addItem()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm flex items-center justify-center gap-1" disabled>
+            <i class="fa-solid fa-plus"></i> 新增品項
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Selected Items List & Quotation Preview -->
+    <div id="quotationArea" class="bg-white p-6 md:p-8 rounded-xl shadow-md border border-slate-200">
+      
+      <!-- Document Header -->
+      <div class="border-b-2 border-slate-800 pb-4 mb-6 flex justify-between items-end">
+        <div>
+          <h1 class="text-2xl md:text-3xl font-bold text-slate-900 tracking-wider">報 價 單</h1>
+          <p class="text-xs text-slate-500 mt-1">QUOTATION</p>
+        </div>
+        <div class="text-right text-xs text-slate-600 space-y-1">
+          <p><span class="font-semibold text-slate-700">單號：</span><span id="printQuoteNo">-</span></p>
+          <p><span class="font-semibold text-slate-700">日期：</span><span id="printQuoteDate">-</span></p>
+        </div>
+      </div>
+
+      <!-- Customer Info Header -->
+      <div class="bg-slate-50 p-4 rounded-lg mb-6 border border-slate-200 text-sm grid grid-cols-1 md:grid-cols-2 gap-2">
+        <p><span class="font-semibold text-slate-700">客戶名稱：</span><span id="printClientName" class="font-medium text-slate-900">貴客戶</span></p>
+        <p><span class="font-semibold text-slate-700">有效期限：</span>報價後 30 天內有效</p>
+      </div>
+
+      <!-- Items List - Desktop Table View -->
+      <div class="hidden md:block overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-100 border-y border-slate-300 text-xs text-slate-700 uppercase tracking-wider">
+              <th class="py-3 px-3 w-12 text-center">#</th>
+              <th class="py-3 px-3">類別</th>
+              <th class="py-3 px-3">產品編號</th>
+              <th class="py-3 px-3">品名</th>
+              <th class="py-3 px-3 text-center">單位</th>
+              <th class="py-3 px-3 text-right">單價 (NT$)</th>
+              <th class="py-3 px-3 text-center w-24 no-print">數量</th>
+              <th class="py-3 px-3 text-center w-16 print-only">數量</th>
+              <th class="py-3 px-3 text-right">小計 (NT$)</th>
+              <th class="py-3 px-3 text-center w-12 no-print">操作</th>
+            </tr>
+          </thead>
+          <tbody id="desktopTableBody" class="divide-y divide-slate-200 text-sm">
+            <tr id="emptyRow">
+              <td colspan="10" class="py-8 text-center text-slate-400 italic">
+                目前尚無選購品項，請從上方選單新增產品。
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Items List - Mobile Card View -->
+      <div id="mobileCardView" class="block md:hidden space-y-3">
+        <div id="emptyCard" class="text-center py-8 text-slate-400 text-sm italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+          目前尚無選購品項，請新增產品。
+        </div>
+      </div>
+
+      <!-- Total Calculation Block -->
+      <div class="mt-6 border-t border-slate-200 pt-4 flex flex-col items-end text-sm">
+        <div class="w-full md:w-72 space-y-2">
+          <div class="flex justify-between text-slate-600">
+            <span>銷售合計 (未稅)：</span>
+            <span class="font-medium" id="subtotalAmount">NT$ 0</span>
+          </div>
+          <div class="flex justify-between text-slate-600">
+            <span>營業稅 (5%)：</span>
+            <span class="font-medium" id="taxAmount">NT$ 0</span>
+          </div>
+          <div class="flex justify-between text-slate-900 font-bold text-base border-t border-slate-300 pt-2">
+            <span>總計 (含稅)：</span>
+            <span class="text-indigo-700" id="totalAmount">NT$ 0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Terms & Signature -->
+      <div class="mt-8 pt-4 border-t border-slate-200 text-xs text-slate-500 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <p class="font-semibold text-slate-700 mb-1">備註說明：</p>
+          <ul class="list-disc list-inside space-y-0.5">
+            <li>以上報價均包含 5% 營業稅。</li>
+            <li>確認訂購請簽章後回傳，謝謝您的支持。</li>
+          </ul>
+        </div>
+        <div class="text-right flex flex-col justify-end">
+          <div class="border-b border-slate-300 w-48 ml-auto mb-1"></div>
+          <p class="pr-2">客戶簽章認購</p>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Sticky Bottom Action Bar for Mobile & Desktop -->
+  <footer class="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-3 shadow-lg z-50 no-print">
+    <div class="max-w-5xl mx-auto flex items-center justify-between gap-3">
+      <div class="text-xs text-slate-600">
+        已選 <span id="itemCountBadge" class="font-bold text-indigo-600">0</span> 項 | 含稅：<span id="mobileTotalBadge" class="font-bold text-slate-900">NT$ 0</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="btnShare" onclick="shareQuote()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2 px-3 rounded-lg text-sm transition-all flex items-center gap-1.5 border border-slate-300">
+          <i class="fa-solid fa-share-nodes"></i> <span class="hidden sm:inline">分享</span>
+        </button>
+        <button id="btnGenerate" onclick="downloadPDF()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+          <i class="fa-solid fa-file-pdf"></i> 產生報價單 (PDF)
+        </button>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Script Logic -->
+  <script>
+    let rawProducts = [];
+    let cart = [];
+    let currentSelectedProduct = null;
+    let currentScriptTag = null;
+
+    // Initialization
+    document.addEventListener("DOMContentLoaded", () => {
+      initDates();
+      
+      // Bind input events for live syncing
+      document.getElementById('clientName').addEventListener('input', syncHeader);
+      document.getElementById('quoteDate').addEventListener('change', syncHeader);
+      
+      document.getElementById('selectType').addEventListener('change', onTypeChange);
+      document.getElementById('selectPno').addEventListener('change', onPnoChange);
+
+      // Auto load initial sheet ID if present
+      initLoadSheet();
+    });
+
+    function extractSheetId(inputStr) {
+      if (!inputStr) return '';
+      const str = inputStr.trim();
+      const match = str.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      return match ? match[1] : str;
+    }
+
+    function initDates() {
+      const today = new Date();
+      const dateStr = today.toISOString().split('T')[0];
+      document.getElementById('quoteDate').value = dateStr;
+      
+      const randomNo = 'QT-' + today.getFullYear() + 
+                       String(today.getMonth() + 1).padStart(2, '0') + 
+                       String(today.getDate()).padStart(2, '0') + '-' + 
+                       Math.floor(1000 + Math.random() * 9000);
+      document.getElementById('quoteNo').value = randomNo;
+      syncHeader();
+    }
+
+    function syncHeader() {
+      const name = document.getElementById('clientName').value || '貴客戶';
+      const date = document.getElementById('quoteDate').value || '-';
+      const no = document.getElementById('quoteNo').value || '-';
+
+      document.getElementById('printClientName').innerText = name;
+      document.getElementById('printQuoteDate').innerText = date;
+      document.getElementById('printQuoteNo').innerText = no;
+    }
+
+    // JSONP Implementation using Google Visualization API (gviz)
+    function initLoadSheet() {
+      const inputVal = document.getElementById('spreadsheetIdInput').value;
+      const sheetId = extractSheetId(inputVal);
+
+      if (!sheetId) {
+        handleLoadError("請輸入有效的 Google 試算表 ID。");
+        return;
+      }
+
+      // Hide error box & update status
+      document.getElementById('errorBox').classList.add('hidden');
+      document.getElementById('dataStatus').className = "text-xs px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 font-medium";
+      document.getElementById('dataStatus').innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> 連線讀取中...`;
+
+      // Remove existing script tag if exists
+      if (currentScriptTag && currentScriptTag.parentNode) {
+        currentScriptTag.parentNode.removeChild(currentScriptTag);
+      }
+
+      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&tq=`;
+      
+      const script = document.createElement('script');
+      script.src = url;
+      currentScriptTag = script;
+
+      // Timeout handler in case of network issue or invalid ID
+      const timeout = setTimeout(() => {
+        handleLoadError("請求逾時，無法連線至 Google 試算表。請確認 ID 是否正確且公開。");
+      }, 10000);
+
+      window.google = window.google || {};
+      window.google.visualization = window.google.visualization || {};
+      window.google.visualization.Query = {
+        setResponse: function(response) {
+          clearTimeout(timeout);
+          if (!response || response.status === 'error') {
+            const errDetail = response?.errors?.[0]?.detailedDescription || response?.errors?.[0]?.message || '無法取得試算表數據';
+            handleLoadError("試算表讀取錯誤：" + errDetail);
+            return;
+          }
+          parseGVizData(response);
+        }
+      };
+
+      script.onerror = () => {
+        clearTimeout(timeout);
+        handleLoadError("網路錯誤或 Google 試算表未開放「知道連結的任何人可檢視」權限。");
+      };
+
+      document.body.appendChild(script);
+    }
+
+    function parseGVizData(response) {
+      try {
+        const table = response.table;
+        const cols = table.cols.map(c => (c.label || c.id || '').trim().toLowerCase());
+        
+        // Find column indices
+        const typeIdx = cols.findIndex(c => c === 'type');
+        const pnoIdx = cols.findIndex(c => c === 'pno');
+        const pnameIdx = cols.findIndex(c => c === 'pname');
+        const unitIdx = cols.findIndex(c => c === 'unit');
+        const priceIdx = cols.findIndex(c => c === 'price');
+
+        if (typeIdx === -1 || pnoIdx === -1 || pnameIdx === -1 || unitIdx === -1 || priceIdx === -1) {
+          handleLoadError("試算表標頭欄位不符合格式（必須包含 type, pno, pname, unit, price 欄位）。");
+          return;
+        }
+
+        rawProducts = table.rows.map(row => {
+          const c = row.c;
+          return {
+            type: c[typeIdx] ? String(c[typeIdx].v || '') : '',
+            pno: c[pnoIdx] ? String(c[pnoIdx].v || '') : '',
+            pname: c[pnameIdx] ? String(c[pnameIdx].v || '') : '',
+            unit: c[unitIdx] ? String(c[unitIdx].v || '') : '',
+            price: c[priceIdx] ? Number(c[priceIdx].v || 0) : 0
+          };
+        }).filter(p => p.type && p.pno);
+
+        if (rawProducts.length === 0) {
+          handleLoadError("試算表中無有效的產品資料。");
+          return;
+        }
+
+        // Success state
+        document.getElementById('dataStatus').className = "text-xs px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-medium";
+        document.getElementById('dataStatus').innerHTML = `<i class="fa-solid fa-check mr-1"></i> 已成功連線載入 ${rawProducts.length} 筆商品`;
+
+        populateTypeDropdown();
+
+      } catch (err) {
+        handleLoadError("解析資料時發生例外錯誤：" + err.message);
+      }
+    }
+
+    function handleLoadError(msg) {
+      document.getElementById('dataStatus').className = "text-xs px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 font-medium";
+      document.getElementById('dataStatus').innerHTML = `<i class="fa-solid fa-xmark mr-1"></i> 連線失敗`;
+
+      document.getElementById('errorMessage').innerText = msg;
+      document.getElementById('errorBox').classList.remove('hidden');
+
+      // Disable inputs & buttons
+      document.getElementById('selectType').disabled = true;
+      document.getElementById('selectType').innerHTML = '<option value="">-- 資料載入失敗 --</option>';
+      document.getElementById('selectPno').disabled = true;
+      document.getElementById('selectPno').innerHTML = '<option value="">-- 請先選類別 --</option>';
+      document.getElementById('inputQty').disabled = true;
+      document.getElementById('btnAddItem').disabled = true;
+      document.getElementById('productInfoDisplay').innerText = '無產品資料';
+      currentSelectedProduct = null;
+    }
+
+    function populateTypeDropdown() {
+      const types = [...new Set(rawProducts.map(p => p.type))];
+      const typeSelect = document.getElementById('selectType');
+      typeSelect.innerHTML = '<option value="">-- 請選擇類別 --</option>' + 
+        types.map(t => `<option value="${t}">${t}</option>`).join('');
+      
+      typeSelect.disabled = false;
+      document.getElementById('selectPno').disabled = true;
+      document.getElementById('selectPno').innerHTML = '<option value="">-- 請先選類別 --</option>';
+      document.getElementById('productInfoDisplay').innerText = '請先選擇產品編號';
+      document.getElementById('btnAddItem').disabled = true;
+      document.getElementById('inputQty').disabled = true;
+    }
+
+    function onTypeChange() {
+      const selectedType = document.getElementById('selectType').value;
+      const pnoSelect = document.getElementById('selectPno');
+      
+      pnoSelect.innerHTML = '<option value="">-- 請選擇編號 --</option>';
+      document.getElementById('productInfoDisplay').innerText = '請先選擇產品編號';
+      currentSelectedProduct = null;
+      document.getElementById('btnAddItem').disabled = true;
+      document.getElementById('inputQty').disabled = true;
+
+      if (!selectedType) {
+        pnoSelect.disabled = true;
+        return;
+      }
+
+      const filtered = rawProducts.filter(p => p.type === selectedType);
+      pnoSelect.innerHTML += filtered.map(p => `<option value="${p.pno}">${p.pno} (${p.pname})</option>`).join('');
+      pnoSelect.disabled = false;
+    }
+
+    function onPnoChange() {
+      const pno = document.getElementById('selectPno').value;
+      if (!pno) {
+        document.getElementById('productInfoDisplay').innerText = '請先選擇產品編號';
+        currentSelectedProduct = null;
+        document.getElementById('btnAddItem').disabled = true;
+        document.getElementById('inputQty').disabled = true;
+        return;
+      }
+
+      currentSelectedProduct = rawProducts.find(p => p.pno === pno);
+      if (currentSelectedProduct) {
+        document.getElementById('productInfoDisplay').innerHTML = 
+          `<span class="font-semibold text-slate-800">${currentSelectedProduct.pname}</span> | ` +
+          `單位: <span class="text-indigo-600">${currentSelectedProduct.unit}</span> | ` +
+          `單價: <span class="text-emerald-600 font-medium">$${currentSelectedProduct.price.toLocaleString()}</span>`;
+        
+        document.getElementById('btnAddItem').disabled = false;
+        document.getElementById('inputQty').disabled = false;
+      }
+    }
+
+    function addItem() {
+      if (!currentSelectedProduct) return;
+      const qty = parseInt(document.getElementById('inputQty').value, 10);
+      
+      if (isNaN(qty) || qty <= 0) {
+        alert("請輸入有效的數量（大於 0）");
+        return;
+      }
+
+      const existingIndex = cart.findIndex(item => item.pno === currentSelectedProduct.pno);
+      if (existingIndex > -1) {
+        cart[existingIndex].qty += qty;
+      } else {
+        cart.push({
+          ...currentSelectedProduct,
+          qty: qty
+        });
+      }
+
+      // Reset selection
+      document.getElementById('inputQty').value = 1;
+      renderCart();
+    }
+
+    function updateQty(pno, newQty) {
+      const qty = parseInt(newQty, 10);
+      if (isNaN(qty) || qty <= 0) {
+        // Remove item if qty is 0 or less
+        cart = cart.filter(item => item.pno !== pno);
+      } else {
+        const item = cart.find(i => i.pno === pno);
+        if (item) item.qty = qty;
+      }
+      renderCart();
+    }
+
+    function removeItem(pno) {
+      cart = cart.filter(item => item.pno !== pno);
+      renderCart();
+    }
+
+    function renderCart() {
+      const desktopBody = document.getElementById('desktopTableBody');
+      const mobileView = document.getElementById('mobileCardView');
+
+      if (cart.length === 0) {
+        desktopBody.innerHTML = `
+          <tr id="emptyRow">
+            <td colspan="10" class="py-8 text-center text-slate-400 italic">目前尚無選購品項，請從上方選單新增產品。</td>
+          </tr>`;
+        mobileView.innerHTML = `
+          <div id="emptyCard" class="text-center py-8 text-slate-400 text-sm italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+            目前尚無選購品項，請新增產品。
+          </div>`;
+        document.getElementById('btnGenerate').disabled = true;
+      } else {
+        document.getElementById('btnGenerate').disabled = false;
+
+        // Desktop Table Render
+        desktopBody.innerHTML = cart.map((item, index) => `
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="py-3 px-3 text-center text-xs font-semibold text-slate-500">${index + 1}</td>
+            <td class="py-3 px-3 text-slate-600 text-xs">${item.type}</td>
+            <td class="py-3 px-3 font-mono text-xs font-medium text-slate-700">${item.pno}</td>
+            <td class="py-3 px-3 font-medium text-slate-900">${item.pname}</td>
+            <td class="py-3 px-3 text-center text-slate-600">${item.unit}</td>
+            <td class="py-3 px-3 text-right font-mono">$${item.price.toLocaleString()}</td>
+            <td class="py-3 px-3 text-center no-print">
+              <input type="number" min="0" value="${item.qty}" onchange="updateQty('${item.pno}', this.value)" 
+                     class="w-16 px-2 py-1 border border-slate-300 rounded text-center text-xs focus:ring-1 focus:ring-indigo-500">
+            </td>
+            <td class="py-3 px-3 text-center font-mono font-semibold print-only">${item.qty}</td>
+            <td class="py-3 px-3 text-right font-mono font-semibold text-slate-800">$${(item.price * item.qty).toLocaleString()}</td>
+            <td class="py-3 px-3 text-center no-print">
+              <button onclick="removeItem('${item.pno}')" class="text-slate-400 hover:text-rose-600 transition-colors">
+                <i class="fa-regular fa-trash-can"></i>
+              </button>
+            </td>
+          </tr>
+        `).join('');
+
+        // Mobile Card Render
+        mobileView.innerHTML = cart.map((item, index) => `
+          <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 shadow-sm space-y-2">
+            <div class="flex justify-between items-start">
+              <div>
+                <span class="inline-block px-2 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold rounded mb-1">${item.type}</span>
+                <h4 class="font-bold text-slate-900 text-sm">${item.pname}</h4>
+                <p class="text-xs text-slate-500 font-mono">料號: ${item.pno}</p>
+              </div>
+              <button onclick="removeItem('${item.pno}')" class="text-slate-400 hover:text-rose-600 p-1 no-print">
+                <i class="fa-regular fa-trash-can"></i>
+              </button>
+            </div>
+            
+            <div class="flex justify-between items-center text-xs pt-2 border-t border-slate-200">
+              <span class="text-slate-600">單價: $${item.price.toLocaleString()} / ${item.unit}</span>
+              <div class="flex items-center gap-1 no-print">
+                <span class="text-slate-600">數量:</span>
+                <input type="number" min="0" value="${item.qty}" onchange="updateQty('${item.pno}', this.value)" 
+                       class="w-14 px-1.5 py-0.5 border border-slate-300 rounded text-center text-xs">
+              </div>
+              <span class="print-only text-slate-600">數量: ${item.qty} ${item.unit}</span>
+            </div>
+
+            <div class="text-right text-xs font-bold text-slate-800 pt-1">
+              小計: <span class="text-indigo-600">$${(item.price * item.qty).toLocaleString()}</span>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      calculateTotals();
+    }
+
+    function calculateTotals() {
+      const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+      const tax = Math.round(subtotal * 0.05);
+      const total = subtotal + tax;
+
+      document.getElementById('subtotalAmount').innerText = `NT$ ${subtotal.toLocaleString()}`;
+      document.getElementById('taxAmount').innerText = `NT$ ${tax.toLocaleString()}`;
+      document.getElementById('totalAmount').innerText = `NT$ ${total.toLocaleString()}`;
+
+      document.getElementById('itemCountBadge').innerText = cart.length;
+      document.getElementById('mobileTotalBadge').innerText = `NT$ ${total.toLocaleString()}`;
+    }
+
+    // PDF Download Handler
+    function downloadPDF() {
+      if (cart.length === 0) return;
+      syncHeader();
+
+      const clientName = document.getElementById('clientName').value.trim() || '客戶';
+      const today = document.getElementById('quoteDate').value || new Date().toISOString().split('T')[0];
+      const filename = `報價單_${clientName}_${today}.pdf`;
+
+      const element = document.getElementById('quotationArea');
+      const opt = {
+        margin:       [10, 10, 10, 10],
+        filename:     filename,
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2, useCORS: true },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      html2pdf().set(opt).from(element).save();
+    }
+
+    // Web Share Handler for LINE / Email / Native Share
+    async function shareQuote() {
+      const clientName = document.getElementById('clientName').value.trim() || '客戶';
+      const totalText = document.getElementById('totalAmount').innerText;
+      const shareData = {
+        title: `報價單 - ${clientName}`,
+        text: `您好，這是給 ${clientName} 的最新產品報價單（總計含稅: ${totalText}），請查收！`,
+        url: window.location.href
+      };
+
+      if (navigator.share) {
+        try {
+          await navigator.share(shareData);
+        } catch (err) {
+          console.log('Share canceled or failed', err);
+        }
+      } else {
+        // Fallback to mailto if Web Share API is not supported
+        const subject = encodeURIComponent(`報價單 - ${clientName}`);
+        const body = encodeURIComponent(shareData.text + "\n\n網址: " + shareData.url);
+        window.location.href = `mailto:?subject=${subject}&body=${body}`;
+      }
+    }
+  </script>
+</body>
+</html>
